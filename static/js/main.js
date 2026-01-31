@@ -1,41 +1,19 @@
-/* ═══════════════════════════════════════════════════════════════
-   Real-Time Right Leg Detection — Frontend logic
-
-   Fixes applied (8 frontend issues)
-   ───────────────────────────────────
-    1  Stop clears <img src> so the browser stops requesting /video_feed.
-    2  switchToWebcam() calls /switch_mode/webcam before reconnecting.
-    3  Upload flow calls /switch_mode/webcam first to release the webcam,
-       then uploads — avoids dangling capture on the backend.
-    4  Reconnect guard: if the <img> fires an error we wait and retry only
-       while isRunning is true; avoids infinite retry loops when stopped.
-    5  isRunning flag is checked in every async path before touching the feed.
-    6  A separate polling loop fetches /gait_data every 200 ms and updates
-       the live gait panel.
-    7  Mode-change helpers always tear down the previous state cleanly.
-    8  Fullscreen exit resets wrapper height.
-   ═══════════════════════════════════════════════════════════════ */
+/* Real-Time Multi-Person Right Leg Detection — Frontend */
 
 let isRunning   = false;
 let currentMode = 'webcam';
-let gaitPollId  = null;            // setInterval id for gait polling
-let reconnectTimer = null;         // pending reconnect timeout
+let gaitPollId  = null;
+let reconnectTimer = null;
 
-// ─── VIDEO FEED MANAGEMENT ──────────────────────────────────────
-
-/** Start (or restart) the video feed stream. */
 function connectFeed() {
     const img = document.getElementById('videoFeed');
-    img.src = '/video_feed?' + Date.now();   // cache-bust
+    img.src = '/video_feed?' + Date.now();
 }
 
-/** Fully disconnect the video feed — browser stops the HTTP request. */
 function disconnectFeed() {
     const img = document.getElementById('videoFeed');
-    img.src = '';                            // stops the multipart stream
+    img.src = '';
 }
-
-// ─── MODE SWITCHING ─────────────────────────────────────────────
 
 function switchToWebcam() {
     currentMode = 'webcam';
@@ -43,7 +21,7 @@ function switchToWebcam() {
     document.getElementById('uploadBtn').classList.remove('active');
     document.getElementById('uploadSection').style.display = 'none';
 
-    disconnectFeed();                        // tear down current stream first
+    disconnectFeed();
 
     fetch('/switch_mode/webcam')
         .then(() => {
@@ -61,12 +39,9 @@ function showUpload() {
     document.getElementById('uploadBtn').classList.add('active');
     document.getElementById('uploadSection').style.display = 'block';
 
-    disconnectFeed();                        // release webcam stream
-    // Tell backend to release webcam so it doesn't hold the device
+    disconnectFeed();
     fetch('/stop').catch(() => {});
 }
-
-// ─── FILE UPLOAD ────────────────────────────────────────────────
 
 function handleFileUpload(event) {
     const file = event.target.files[0];
@@ -84,7 +59,6 @@ function handleFileUpload(event) {
             if (data.success) {
                 currentMode = data.mode;
                 showStatus(`Uploaded — mode: ${data.mode}`, 'success');
-                // Reconnect feed for the new file
                 isRunning = true;
                 connectFeed();
                 _setLiveUI(true);
@@ -95,17 +69,14 @@ function handleFileUpload(event) {
         .catch(() => showStatus('Network error during upload', 'error'));
 }
 
-// ─── START / STOP ───────────────────────────────────────────────
-
 function startDetection() {
     isRunning = true;
     _setLiveUI(true);
 
-    // If we have a mode ready, connect
     if (currentMode === 'webcam') {
         fetch('/switch_mode/webcam')
             .then(() => connectFeed())
-            .catch(() => connectFeed());     // best-effort; connect anyway
+            .catch(() => connectFeed());
     } else {
         connectFeed();
     }
@@ -113,10 +84,10 @@ function startDetection() {
 
 function stopDetection() {
     isRunning = false;
-    disconnectFeed();                        // ← key fix: actually stops the stream
+    disconnectFeed();
     _setLiveUI(false);
 
-    fetch('/stop').catch(() => {});          // tell backend to stop its generator
+    fetch('/stop').catch(() => {});
 }
 
 function _setLiveUI(live) {
@@ -131,8 +102,6 @@ function _setLiveUI(live) {
         ind.textContent = '● PAUSED';
     }
 }
-
-// ─── STATUS MESSAGES ────────────────────────────────────────────
 
 function showStatus(message, type) {
     const el = document.getElementById('uploadStatus');
@@ -153,8 +122,6 @@ function showStatus(message, type) {
     el._hideTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
 }
 
-// ─── FULLSCREEN ─────────────────────────────────────────────────
-
 function toggleFullscreen() {
     const wrapper = document.querySelector('.video-wrapper');
     if (!document.fullscreenElement) {
@@ -169,16 +136,14 @@ document.addEventListener('fullscreenchange', () => {
     wrapper.style.height = document.fullscreenElement ? '100vh' : 'auto';
 });
 
-// ─── GAIT DATA POLLING ──────────────────────────────────────────
-
 function startGaitPolling() {
-    if (gaitPollId) return;                  // already running
+    if (gaitPollId) return;
     gaitPollId = setInterval(() => {
-        if (!isRunning) return;              // skip when paused
+        if (!isRunning) return;
         fetch('/gait_data')
             .then(r => r.json())
             .then(updateGaitPanel)
-            .catch(() => {});                // silent fail — non-critical
+            .catch(() => {});
     }, 200);
 }
 
@@ -191,12 +156,24 @@ function stopGaitPolling() {
 
 function updateGaitPanel(data) {
     if (!data) return;
-    _setText('gaitConfidence', data.confidence != null ? data.confidence.toFixed(2) : '—');
-    _setText('gaitKnee',       data.knee_angle_deg != null ? data.knee_angle_deg + '°' : '—');
-    _setText('gaitScale',      data.scale_factor != null ? data.scale_factor.toFixed(3) : '—');
-    _setText('gaitStride',     data.stride_count != null ? String(data.stride_count) : '—');
-    _setText('gaitTime',       data.timestamp_s != null ? data.timestamp_s.toFixed(1) + ' s' : '—');
-    _setText('gaitStatus',     data.status || '—');
+    
+    // Handle multi-person data
+    if (data.num_people !== undefined && data.people && data.people.length > 0) {
+        const firstPerson = data.people[0];
+        _setText('gaitConfidence', firstPerson.confidence != null ? firstPerson.confidence.toFixed(2) : '—');
+        _setText('gaitKnee', firstPerson.knee_angle_deg != null ? firstPerson.knee_angle_deg + '°' : '—');
+        _setText('gaitScale', firstPerson.scale_factor != null ? firstPerson.scale_factor.toFixed(3) : '—');
+        _setText('gaitStride', firstPerson.stride_count != null ? String(firstPerson.stride_count) : '—');
+        _setText('gaitTime', firstPerson.timestamp_s != null ? firstPerson.timestamp_s.toFixed(1) + ' s' : '—');
+        _setText('gaitStatus', `${data.num_people} ${data.num_people === 1 ? 'person' : 'people'} detected`);
+    } else {
+        _setText('gaitConfidence', '—');
+        _setText('gaitKnee', '—');
+        _setText('gaitScale', '—');
+        _setText('gaitStride', '—');
+        _setText('gaitTime', '—');
+        _setText('gaitStatus', data.status || 'waiting…');
+    }
 }
 
 function _setText(id, val) {
@@ -204,22 +181,18 @@ function _setText(id, val) {
     if (el) el.textContent = val;
 }
 
-// ─── ERROR / RECONNECT ──────────────────────────────────────────
-
 document.addEventListener('DOMContentLoaded', () => {
     const img = document.getElementById('videoFeed');
 
     img.addEventListener('error', () => {
-        if (!isRunning) return;              // don't retry if deliberately stopped
+        if (!isRunning) return;
         console.warn('Video feed error — scheduling reconnect');
         clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
-            if (isRunning) connectFeed();    // guarded retry
+            if (isRunning) connectFeed();
         }, 2000);
     });
 });
-
-// ─── KEYBOARD SHORTCUTS ─────────────────────────────────────────
 
 document.addEventListener('keydown', e => {
     switch (e.key) {
@@ -236,17 +209,14 @@ document.addEventListener('keydown', e => {
     }
 });
 
-// ─── INIT ───────────────────────────────────────────────────────
-
 window.addEventListener('load', () => {
-    console.log('Gait Detection App loaded');
+    console.log('Multi-Person Gait Detection App loaded');
     isRunning = true;
     _setLiveUI(true);
     connectFeed();
     startGaitPolling();
 });
 
-// Pause polling when tab is hidden; resume when visible
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         stopGaitPolling();

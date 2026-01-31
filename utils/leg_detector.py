@@ -186,11 +186,12 @@ class RightLegDetector:
         r_hip_x = lms[_R_HIP].x
         l_hip_x = lms[_L_HIP].x
 
-        # MediaPipe "RIGHT" is viewer's left when person faces camera.
-        # We define "right leg" as the one on the RIGHT side of the image.
+        # MediaPipe "RIGHT" is the person's anatomical right side.
+        # When person faces camera, their right side appears on the LEFT of the image.
+        # We track the anatomical right leg (MediaPipe RIGHT landmarks).
         if self._locked_side is None:
-            # First frame: pick the side whose hip is further right in image
-            self._locked_side = 'right' if r_hip_x > l_hip_x else 'left'
+            # First frame: MediaPipe RIGHT hip has smaller x when person faces camera
+            self._locked_side = 'right' if r_hip_x < l_hip_x else 'left'
 
         return self._locked_side
 
