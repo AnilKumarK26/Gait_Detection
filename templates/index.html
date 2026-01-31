@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Right Leg Detection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🦵 Real-Time Right Leg Detection</h1>
+            <p class="subtitle">Advanced Computer Vision with MediaPipe & Segmentation</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <div class="mode-selector">
+                    <h3>Select Input Mode</h3>
+                    <div class="mode-buttons">
+                        <button id="webcamBtn" class="mode-btn active" onclick="switchToWebcam()">
+                            📹 Webcam
+                        </button>
+                        <button id="uploadBtn" class="mode-btn" onclick="showUpload()">
+                            📁 Upload File
+                        </button>
+                    </div>
+                </div>
+
+                <div class="upload-section" id="uploadSection" style="display: none;">
+                    <h3>Upload Image/Video</h3>
+                    <div class="file-upload">
+                        <input type="file" id="fileInput" accept="image/*,video/*" onchange="handleFileUpload(event)">
+                        <label for="fileInput" class="upload-label">
+                            <span id="fileName">Choose file...</span>
+                        </label>
+                    </div>
+                    <div id="uploadStatus" class="upload-status"></div>
+                </div>
+
+                <div class="info-panel">
+                    <h3>ℹ️ Information</h3>
+                    <ul class="info-list">
+                        <li><strong>Detection:</strong> MediaPipe Pose</li>
+                        <li><strong>Segmentation:</strong> Selfie Segmentation</li>
+                        <li><strong>Supported:</strong> All orientations</li>
+                        <li><strong>Performance:</strong> Real-time (20+ FPS)</li>
+                    </ul>
+                </div>
+
+                <div class="legend">
+                    <h3>🎨 Legend</h3>
+                    <div class="legend-item">
+                        <span class="color-box" style="background: #64C8FF;"></span>
+                        <span>Right Leg (Highlighted)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background: white; border: 1px solid #ccc;"></span>
+                        <span>Rest of Body (Masked)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Video Display -->
+            <div class="video-container">
+                <div class="video-wrapper">
+                    <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed">
+                    <div class="video-overlay">
+                        <span id="statusIndicator" class="status-indicator active">● LIVE</span>
+                    </div>
+                </div>
+                
+                <div class="video-controls">
+                    <button id="startBtn" class="control-btn" onclick="startDetection()">
+                        ▶️ Start
+                    </button>
+                    <button id="stopBtn" class="control-btn" onclick="stopDetection()">
+                        ⏸️ Stop
+                    </button>
+                    <button id="fullscreenBtn" class="control-btn" onclick="toggleFullscreen()">
+                        ⛶ Fullscreen
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Built with MediaPipe, OpenCV & Flask | Edge-Optimized Detection</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

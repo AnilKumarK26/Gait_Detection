@@ -1,0 +1,237 @@
+"""
+Right Leg Detector using MediaPipe Pose + Segmentation
+No custom training required - uses pre-trained models
+"""
+
+import cv2
+import numpy as np
+from typing import Tuple, Optional
+import time
+
+try:
+    import mediapipe as mp
+    from mediapipe.python.solutions import pose as mp_pose
+    from mediapipe.python.solutions import selfie_segmentation as mp_selfie
+except ImportError:
+    import mediapipe as mp
+    mp_pose = mp.solutions.pose
+    mp_selfie = mp.solutions.selfie_segmentation
+
+
+class RightLegDetector:
+    """Detects and segments right leg using MediaPipe"""
+    
+    def __init__(self, static_mode=False):
+        # Initialize MediaPipe Pose
+        self.static_mode = static_mode
+        self.pose = mp_pose.Pose(
+            static_image_mode=static_mode,
+            model_complexity=1,  # 0=Lite, 1=Full, 2=Heavy
+            enable_segmentation=False,  # Disabled to avoid dimension mismatch errors
+            min_detection_confidence=0.3,  # Lowered for better detection
+            min_tracking_confidence=0.3
+        )
+        
+        # Initialize MediaPipe Selfie Segmentation for body mask
+        self.selfie_seg = mp_selfie.SelfieSegmentation(model_selection=1)
+        
+        # Color for right leg highlight (cyan/blue like in reference)
+        self.leg_color = (255, 180, 100)  # BGR format - cyan/light blue
+        self.mask_alpha = 0.8
+        
+        # Performance tracking
+        self.fps = 0
+        self.frame_count = 0
+        self.start_time = time.time()
+        
+    def get_right_leg_landmarks(self, pose_landmarks) -> list:
+        """Extract right leg keypoints (hip, knee, ankle, heel, foot_index)"""
+        if not pose_landmarks:
+            return []
+        
+        # Right leg landmarks indices in MediaPipe
+        right_leg_indices = [
+            24,  # RIGHT_HIP
+            26,  # RIGHT_KNEE
+            28,  # RIGHT_ANKLE
+            30,  # RIGHT_HEEL
+            32,  # RIGHT_FOOT_INDEX
+        ]
+        
+        landmarks = []
+        for idx in right_leg_indices:
+            lm = pose_landmarks.landmark[idx]
+            landmarks.append((lm.x, lm.y, lm.visibility))
+        
+        return landmarks
+    
+    def create_leg_mask(self, image_shape: Tuple, landmarks: list) -> np.ndarray:
+        """Create mask for right leg region using landmarks"""
+        height, width = image_shape[:2]
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        if len(landmarks) < 5:
+            return mask
+        
+        # Convert normalized coordinates to pixel coordinates
+        points = []
+        for lm in landmarks:
+            if lm[2] > 0.5:  # visibility threshold
+                x = int(lm[0] * width)
+                y = int(lm[1] * height)
+                points.append([x, y])
+        
+        if len(points) < 3:
+            return mask
+        
+        # Create polygon from leg landmarks
+        points_array = np.array(points, dtype=np.int32)
+        
+        # Add width to the leg by creating offset points
+        leg_width = int(width * 0.08)  # Approximate leg width
+        
+        # Create a thicker polygon by expanding points
+        hull = cv2.convexHull(points_array)
+        
+        # Dilate the polygon to make it thicker
+        cv2.fillConvexPoly(mask, hull, 255)
+        
+        # Apply morphological operations to smooth and expand
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (leg_width, leg_width))
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        mask = cv2.GaussianBlur(mask, (21, 21), 0)
+        
+        return mask
+    
+    def refine_mask_with_segmentation(self, image: np.ndarray, leg_mask: np.ndarray) -> np.ndarray:
+        """Refine leg mask using body segmentation"""
+        # Get body segmentation
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = self.selfie_seg.process(rgb_image)
+        
+        if results.segmentation_mask is not None:
+            # Convert segmentation mask to binary
+            body_mask = (results.segmentation_mask > 0.5).astype(np.uint8) * 255
+            
+            # Combine with leg mask (intersection)
+            refined_mask = cv2.bitwise_and(leg_mask, body_mask)
+            
+            return refined_mask
+        
+        return leg_mask
+    
+    def apply_visualization(self, image: np.ndarray, leg_mask: np.ndarray) -> np.ndarray:
+        """Apply visualization: mask body and highlight right leg"""
+        height, width = image.shape[:2]
+        
+        # Create black background
+        output = np.zeros_like(image)
+        
+        # Create inverse mask for body (everything except right leg)
+        inverse_mask = cv2.bitwise_not(leg_mask)
+        
+        # Get body segmentation for masking
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        seg_results = self.selfie_seg.process(rgb_image)
+        
+        if seg_results.segmentation_mask is not None:
+            body_mask = (seg_results.segmentation_mask > 0.5).astype(np.uint8) * 255
+            
+            # Create masked body (white silhouette for non-leg parts)
+            body_without_leg = cv2.bitwise_and(body_mask, inverse_mask)
+            
+            # Apply white mask to body (everything except right leg)
+            white_overlay = np.ones_like(output) * 255
+            output = np.where(body_without_leg[..., None] > 0, white_overlay, output)
+        
+        # Highlight right leg with cyan color
+        # Create colored overlay for the leg
+        leg_colored = output.copy()
+        leg_colored[leg_mask > 0] = self.leg_color
+        
+        # Blend the leg overlay smoothly
+        output = cv2.addWeighted(output, 1 - self.mask_alpha, leg_colored, self.mask_alpha, 0)
+        
+        # Apply Gaussian blur to the mask edges for smoother appearance
+        leg_mask_blurred = cv2.GaussianBlur(leg_mask, (15, 15), 0)
+        
+        # Create smooth transition at edges
+        alpha_mask = leg_mask_blurred.astype(float) / 255.0
+        alpha_mask_3channel = np.stack([alpha_mask] * 3, axis=-1)
+        
+        output = (leg_colored * alpha_mask_3channel + output * (1 - alpha_mask_3channel)).astype(np.uint8)
+        
+        return output
+    
+    def process_frame(self, frame: np.ndarray, debug=False) -> np.ndarray:
+        """Main processing function for each frame"""
+        if frame is None:
+            return frame
+        
+        start_time = time.time()
+        
+        # Convert BGR to RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process with pose detection
+        pose_results = self.pose.process(rgb_frame)
+        
+        output_frame = frame.copy()
+        detection_status = "No pose detected"
+        
+        if pose_results.pose_landmarks:
+            detection_status = "Pose detected"
+            # Get right leg landmarks
+            right_leg_lms = self.get_right_leg_landmarks(pose_results.pose_landmarks)
+            
+            if right_leg_lms and len(right_leg_lms) >= 3:
+                detection_status = "Right leg detected"
+                # Create initial leg mask
+                leg_mask = self.create_leg_mask(frame.shape, right_leg_lms)
+                
+                # Check if mask has any content
+                if np.sum(leg_mask) > 0:
+                    detection_status = "Mask created"
+                    # Refine with segmentation
+                    refined_mask = self.refine_mask_with_segmentation(frame, leg_mask)
+                    
+                    if np.sum(refined_mask) > 0:
+                        detection_status = "Mask refined - Applying visualization"
+                        # Apply visualization
+                        output_frame = self.apply_visualization(frame, refined_mask)
+                    else:
+                        detection_status = "Mask refinement failed"
+                else:
+                    detection_status = "Empty mask created"
+            else:
+                detection_status = f"Insufficient leg landmarks: {len(right_leg_lms) if right_leg_lms else 0}"
+        
+        # Calculate FPS
+        self.frame_count += 1
+        elapsed_time = time.time() - self.start_time
+        if elapsed_time > 1.0:
+            self.fps = self.frame_count / elapsed_time
+            self.frame_count = 0
+            self.start_time = time.time()
+        
+        # Add FPS counter
+        cv2.putText(output_frame, f'FPS: {self.fps:.1f}', (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Add detection status
+        cv2.putText(output_frame, detection_status, (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        # Add label if detection successful
+        if "visualization" in detection_status:
+            cv2.putText(output_frame, 'RIGHT LEG', (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, self.leg_color, 2)
+        
+        return output_frame
+    
+    def __del__(self):
+        """Cleanup resources"""
+        if hasattr(self, 'pose'):
+            self.pose.close()
+        if hasattr(self, 'selfie_seg'):
+            self.selfie_seg.close()
