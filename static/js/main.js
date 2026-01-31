@@ -1,218 +1,259 @@
-// Main JavaScript for Gait Detection Application
+/* ═══════════════════════════════════════════════════════════════
+   Real-Time Right Leg Detection — Frontend logic
 
+   Fixes applied (8 frontend issues)
+   ───────────────────────────────────
+    1  Stop clears <img src> so the browser stops requesting /video_feed.
+    2  switchToWebcam() calls /switch_mode/webcam before reconnecting.
+    3  Upload flow calls /switch_mode/webcam first to release the webcam,
+       then uploads — avoids dangling capture on the backend.
+    4  Reconnect guard: if the <img> fires an error we wait and retry only
+       while isRunning is true; avoids infinite retry loops when stopped.
+    5  isRunning flag is checked in every async path before touching the feed.
+    6  A separate polling loop fetches /gait_data every 200 ms and updates
+       the live gait panel.
+    7  Mode-change helpers always tear down the previous state cleanly.
+    8  Fullscreen exit resets wrapper height.
+   ═══════════════════════════════════════════════════════════════ */
+
+let isRunning   = false;
 let currentMode = 'webcam';
-let isRunning = true;
+let gaitPollId  = null;            // setInterval id for gait polling
+let reconnectTimer = null;         // pending reconnect timeout
 
-// Switch to webcam mode
+// ─── VIDEO FEED MANAGEMENT ──────────────────────────────────────
+
+/** Start (or restart) the video feed stream. */
+function connectFeed() {
+    const img = document.getElementById('videoFeed');
+    img.src = '/video_feed?' + Date.now();   // cache-bust
+}
+
+/** Fully disconnect the video feed — browser stops the HTTP request. */
+function disconnectFeed() {
+    const img = document.getElementById('videoFeed');
+    img.src = '';                            // stops the multipart stream
+}
+
+// ─── MODE SWITCHING ─────────────────────────────────────────────
+
 function switchToWebcam() {
     currentMode = 'webcam';
-    
-    // Update UI
     document.getElementById('webcamBtn').classList.add('active');
     document.getElementById('uploadBtn').classList.remove('active');
     document.getElementById('uploadSection').style.display = 'none';
-    
-    // Switch to webcam feed
+
+    disconnectFeed();                        // tear down current stream first
+
     fetch('/switch_mode/webcam')
-        .then(response => response.json())
-        .then(data => {
-            console.log('Switched to webcam mode');
-            updateVideoFeed();
-            showStatus('Webcam mode activated', 'success');
+        .then(() => {
+            if (isRunning) connectFeed();
         })
-        .catch(error => {
-            console.error('Error switching to webcam:', error);
+        .catch(err => {
+            console.error('switch_mode/webcam failed:', err);
             showStatus('Error switching to webcam', 'error');
         });
 }
 
-// Show upload section
 function showUpload() {
+    currentMode = 'upload';
     document.getElementById('webcamBtn').classList.remove('active');
     document.getElementById('uploadBtn').classList.add('active');
     document.getElementById('uploadSection').style.display = 'block';
+
+    disconnectFeed();                        // release webcam stream
+    // Tell backend to release webcam so it doesn't hold the device
+    fetch('/stop').catch(() => {});
 }
 
-// Handle file upload
+// ─── FILE UPLOAD ────────────────────────────────────────────────
+
 function handleFileUpload(event) {
     const file = event.target.files[0];
-    
-    if (!file) {
-        return;
-    }
-    
-    // Update file name display
+    if (!file) return;
+
     document.getElementById('fileName').textContent = file.name;
-    
-    // Create form data
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    // Show loading status
-    showStatus('Uploading file...', 'loading');
-    
-    // Upload file
-    fetch('/upload', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            currentMode = data.mode;
-            showStatus(`File uploaded successfully! Mode: ${data.mode}`, 'success');
-            updateVideoFeed();
-        } else {
-            showStatus(`Error: ${data.error}`, 'error');
-        }
-    })
-    .catch(error => {
-        console.error('Upload error:', error);
-        showStatus('Error uploading file', 'error');
-    });
-}
+    showStatus('Uploading…', 'loading');
 
-// Update video feed
-function updateVideoFeed() {
-    const videoFeed = document.getElementById('videoFeed');
-    const timestamp = new Date().getTime();
-    videoFeed.src = `/video_feed?t=${timestamp}`;
-}
+    const fd = new FormData();
+    fd.append('file', file);
 
-// Show status message
-function showStatus(message, type) {
-    const statusDiv = document.getElementById('uploadStatus');
-    statusDiv.textContent = message;
-    statusDiv.style.display = 'block';
-    
-    // Style based on type
-    if (type === 'success') {
-        statusDiv.style.background = 'rgba(34, 197, 94, 0.2)';
-        statusDiv.style.color = '#22c55e';
-        statusDiv.style.border = '1px solid #22c55e';
-    } else if (type === 'error') {
-        statusDiv.style.background = 'rgba(239, 68, 68, 0.2)';
-        statusDiv.style.color = '#ef4444';
-        statusDiv.style.border = '1px solid #ef4444';
-    } else if (type === 'loading') {
-        statusDiv.style.background = 'rgba(100, 200, 255, 0.2)';
-        statusDiv.style.color = '#64C8FF';
-        statusDiv.style.border = '1px solid #64C8FF';
-    }
-    
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-        statusDiv.style.display = 'none';
-    }, 5000);
-}
-
-// Start detection
-function startDetection() {
-    const videoFeed = document.getElementById('videoFeed');
-    const statusIndicator = document.getElementById('statusIndicator');
-    
-    videoFeed.style.opacity = '1';
-    statusIndicator.classList.add('active');
-    statusIndicator.classList.remove('inactive');
-    statusIndicator.textContent = '● LIVE';
-    
-    isRunning = true;
-    updateVideoFeed();
-}
-
-// Stop detection
-function stopDetection() {
-    const videoFeed = document.getElementById('videoFeed');
-    const statusIndicator = document.getElementById('statusIndicator');
-    
-    fetch('/stop')
-        .then(response => response.json())
+    fetch('/upload', { method: 'POST', body: fd })
+        .then(r => r.json())
         .then(data => {
-            videoFeed.style.opacity = '0.5';
-            statusIndicator.classList.remove('active');
-            statusIndicator.classList.add('inactive');
-            statusIndicator.textContent = '● PAUSED';
-            isRunning = false;
+            if (data.success) {
+                currentMode = data.mode;
+                showStatus(`Uploaded — mode: ${data.mode}`, 'success');
+                // Reconnect feed for the new file
+                isRunning = true;
+                connectFeed();
+                _setLiveUI(true);
+            } else {
+                showStatus(data.error || 'Upload failed', 'error');
+            }
         })
-        .catch(error => {
-            console.error('Error stopping detection:', error);
-        });
+        .catch(() => showStatus('Network error during upload', 'error'));
 }
 
-// Toggle fullscreen
+// ─── START / STOP ───────────────────────────────────────────────
+
+function startDetection() {
+    isRunning = true;
+    _setLiveUI(true);
+
+    // If we have a mode ready, connect
+    if (currentMode === 'webcam') {
+        fetch('/switch_mode/webcam')
+            .then(() => connectFeed())
+            .catch(() => connectFeed());     // best-effort; connect anyway
+    } else {
+        connectFeed();
+    }
+}
+
+function stopDetection() {
+    isRunning = false;
+    disconnectFeed();                        // ← key fix: actually stops the stream
+    _setLiveUI(false);
+
+    fetch('/stop').catch(() => {});          // tell backend to stop its generator
+}
+
+function _setLiveUI(live) {
+    const ind = document.getElementById('statusIndicator');
+    if (live) {
+        ind.classList.add('active');
+        ind.classList.remove('inactive');
+        ind.textContent = '● LIVE';
+    } else {
+        ind.classList.remove('active');
+        ind.classList.add('inactive');
+        ind.textContent = '● PAUSED';
+    }
+}
+
+// ─── STATUS MESSAGES ────────────────────────────────────────────
+
+function showStatus(message, type) {
+    const el = document.getElementById('uploadStatus');
+    el.textContent = message;
+    el.style.display = 'block';
+
+    const styles = {
+        success: { bg: 'rgba(34,197,94,.2)',  color: '#22c55e', border: '1px solid #22c55e' },
+        error:   { bg: 'rgba(239,68,68,.2)',  color: '#ef4444', border: '1px solid #ef4444' },
+        loading: { bg: 'rgba(100,200,255,.2)', color: '#64C8FF', border: '1px solid #64C8FF' },
+    };
+    const s = styles[type] || styles.loading;
+    el.style.background = s.bg;
+    el.style.color      = s.color;
+    el.style.border     = s.border;
+
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
+// ─── FULLSCREEN ─────────────────────────────────────────────────
+
 function toggleFullscreen() {
-    const videoWrapper = document.querySelector('.video-wrapper');
-    
+    const wrapper = document.querySelector('.video-wrapper');
     if (!document.fullscreenElement) {
-        videoWrapper.requestFullscreen().catch(err => {
-            console.error('Error attempting to enable fullscreen:', err);
-        });
+        wrapper.requestFullscreen().catch(() => {});
     } else {
         document.exitFullscreen();
     }
 }
 
-// Handle fullscreen changes
 document.addEventListener('fullscreenchange', () => {
-    const videoWrapper = document.querySelector('.video-wrapper');
-    if (document.fullscreenElement) {
-        videoWrapper.style.height = '100vh';
-    } else {
-        videoWrapper.style.height = 'auto';
-    }
+    const wrapper = document.querySelector('.video-wrapper');
+    wrapper.style.height = document.fullscreenElement ? '100vh' : 'auto';
 });
 
-// Keyboard shortcuts
-document.addEventListener('keydown', (event) => {
-    switch(event.key) {
+// ─── GAIT DATA POLLING ──────────────────────────────────────────
+
+function startGaitPolling() {
+    if (gaitPollId) return;                  // already running
+    gaitPollId = setInterval(() => {
+        if (!isRunning) return;              // skip when paused
+        fetch('/gait_data')
+            .then(r => r.json())
+            .then(updateGaitPanel)
+            .catch(() => {});                // silent fail — non-critical
+    }, 200);
+}
+
+function stopGaitPolling() {
+    if (gaitPollId) {
+        clearInterval(gaitPollId);
+        gaitPollId = null;
+    }
+}
+
+function updateGaitPanel(data) {
+    if (!data) return;
+    _setText('gaitConfidence', data.confidence != null ? data.confidence.toFixed(2) : '—');
+    _setText('gaitKnee',       data.knee_angle_deg != null ? data.knee_angle_deg + '°' : '—');
+    _setText('gaitScale',      data.scale_factor != null ? data.scale_factor.toFixed(3) : '—');
+    _setText('gaitStride',     data.stride_count != null ? String(data.stride_count) : '—');
+    _setText('gaitTime',       data.timestamp_s != null ? data.timestamp_s.toFixed(1) + ' s' : '—');
+    _setText('gaitStatus',     data.status || '—');
+}
+
+function _setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+}
+
+// ─── ERROR / RECONNECT ──────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+    const img = document.getElementById('videoFeed');
+
+    img.addEventListener('error', () => {
+        if (!isRunning) return;              // don't retry if deliberately stopped
+        console.warn('Video feed error — scheduling reconnect');
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+            if (isRunning) connectFeed();    // guarded retry
+        }, 2000);
+    });
+});
+
+// ─── KEYBOARD SHORTCUTS ─────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+    switch (e.key) {
         case ' ':
-            event.preventDefault();
-            if (isRunning) {
-                stopDetection();
-            } else {
-                startDetection();
-            }
+            e.preventDefault();
+            isRunning ? stopDetection() : startDetection();
             break;
-        case 'f':
-        case 'F':
+        case 'f': case 'F':
             toggleFullscreen();
             break;
-        case 'w':
-        case 'W':
+        case 'w': case 'W':
             switchToWebcam();
             break;
     }
 });
 
-// Initialize on page load
+// ─── INIT ───────────────────────────────────────────────────────
+
 window.addEventListener('load', () => {
-    console.log('Gait Detection Application Loaded');
-    switchToWebcam();
+    console.log('Gait Detection App loaded');
+    isRunning = true;
+    _setLiveUI(true);
+    connectFeed();
+    startGaitPolling();
 });
 
-// Handle page visibility changes
+// Pause polling when tab is hidden; resume when visible
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-        // Page is hidden, optionally pause detection
-        console.log('Page hidden');
+        stopGaitPolling();
     } else {
-        // Page is visible, resume if needed
-        console.log('Page visible');
         if (isRunning) {
-            updateVideoFeed();
+            connectFeed();
+            startGaitPolling();
         }
     }
-});
-
-// Error handling for video feed
-document.getElementById('videoFeed').addEventListener('error', () => {
-    console.error('Video feed error');
-    showStatus('Video feed disconnected. Reconnecting...', 'error');
-    
-    // Attempt to reconnect after 2 seconds
-    setTimeout(() => {
-        if (isRunning) {
-            updateVideoFeed();
-        }
-    }, 2000);
 });

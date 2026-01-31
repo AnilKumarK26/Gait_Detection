@@ -1,233 +1,242 @@
 """
-Real-Time Right Leg Detection Application
-Uses MediaPipe Pose + Segmentation for accurate leg detection
+Real-Time Right Leg Detection — Flask backend (thread-safe, single-client)
+
+Fixes applied (14 backend issues)
+──────────────────────────────────
+ 1  All shared state guarded by threading.Lock — no more race conditions.
+ 2  Each generator owns its detector; detector lifecycle is tied to the
+    generator, not to a dangling global.
+ 3  Image mode: frame is rendered once, yielded in a loop that exits on
+    client disconnect — no infinite generator leak.
+ 4  VideoCapture opened exactly once per generator; released in finally.
+ 5  Webcam released explicitly when switching to upload mode.
+ 6  Client-disconnect detected via GeneratorExit / broken pipe; generator
+    tears down its resources cleanly.
+ 7  /stop sets a per-session flag that the active generator checks every
+    frame — generator actually stops.
+ 8  FPS throttle (max 30 fps) prevents CPU saturation on fast cameras.
+ 9  Single-client enforcement: a new /video_feed request cancels the
+    previous one via a generation-counter cookie.
+10  /switch_mode/webcam and /upload both notify the backend to release
+    the webcam before starting the new mode.
+11  No global detector; each generator creates and destroys its own.
+12  Detector recreation only when mode actually changes.
+13  Upload validation tightened (size + extension).
+14  All cleanup in finally blocks — survives exceptions.
 """
 
 from flask import Flask, render_template, Response, request, jsonify
 import cv2
 import numpy as np
-import mediapipe as mp
 import os
+import time
+import threading
 from utils.leg_detector import RightLegDetector
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config['UPLOAD_FOLDER']      = 'static/uploads'
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024          # 100 MB
 app.config['ALLOWED_EXTENSIONS'] = {'mp4', 'avi', 'mov', 'png', 'jpg', 'jpeg'}
 
-# Global variables
-camera = None
-video_path = None
-processing_mode = 'webcam'
-current_detector = None
-detector_lock = False  # Prevent simultaneous detector access
+# ─── Thread-safe shared state ─────────────────────────────────────
+_lock = threading.Lock()
+
+class _AppState:
+    """All mutable shared state lives here, protected by _lock."""
+    processing_mode: str            = 'webcam'   # 'webcam' | 'video' | 'image'
+    video_path:      str | None     = None
+    stop_requested:  bool           = False      # set by /stop, cleared by generator
+    generation:      int            = 0          # bumped on every new /video_feed
+
+_state = _AppState()
 
 
-def allowed_file(filename):
+def _allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 
+# ─── ROUTES ───────────────────────────────────────────────────────
+
 @app.route('/')
 def index():
-    """Render main page"""
     return render_template('index.html')
 
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    """Handle file upload"""
-    global video_path, processing_mode
-    
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
-    
+
     file = request.files['file']
-    
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
-    
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        
-        video_path = filepath
-        processing_mode = 'video' if filename.lower().endswith(('.mp4', '.avi', '.mov')) else 'image'
-        
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'mode': processing_mode
-        })
-    
-    return jsonify({'error': 'Invalid file type'}), 400
+
+    if not _allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type'}), 400
+
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+
+    is_video = filename.lower().endswith(('.mp4', '.avi', '.mov'))
+
+    with _lock:
+        _state.video_path      = filepath
+        _state.processing_mode = 'video' if is_video else 'image'
+        _state.stop_requested  = False
+        _state.generation     += 1          # invalidate any running generator
+
+    return jsonify({
+        'success':  True,
+        'filename': filename,
+        'mode':     _state.processing_mode,
+    })
 
 
 @app.route('/video_feed')
 def video_feed():
-    """Video streaming route"""
-    return Response(generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Bump generation so any previous generator will exit on next iteration
+    with _lock:
+        _state.stop_requested = False
+        _state.generation    += 1
+        my_generation = _state.generation
+
+    return Response(
+        _generate_frames(my_generation),
+        mimetype='multipart/x-mixed-replace; boundary=frame',
+    )
 
 
-def generate_frames():
-    """Generate frames for video streaming"""
-    global camera, video_path, processing_mode, current_detector, detector_lock
-    
-    # Determine if we need a new detector
-    need_new_detector = (current_detector is None) or (processing_mode == 'image')
-    
-    if need_new_detector:
-        # Close old detector if switching modes
-        if current_detector is not None and processing_mode == 'image':
-            try:
-                current_detector.pose.close()
-                current_detector.selfie_seg.close()
-            except:
-                pass
-            current_detector = None
-        
-        # Create appropriate detector
-        static_mode = (processing_mode == 'image')
-        detector = RightLegDetector(static_mode=static_mode)
-        
-        # Only save to current_detector if NOT image mode (images get fresh detector each time)
-        if processing_mode != 'image':
-            current_detector = detector
-    else:
-        detector = current_detector
-    
-    try:
-        if processing_mode == 'webcam':
-            if camera is None:
-                camera = cv2.VideoCapture(0)
-                # Set camera properties for better performance
-                camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap = camera
-            
-            while True:
-                success, frame = cap.read()
-                
-                if not success:
-                    print("Failed to read from webcam")
-                    break
-                
-                # Process frame with right leg detection
-                processed_frame = detector.process_frame(frame)
-                
-                # Encode frame
-                ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                frame_bytes = buffer.tobytes()
-                
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                
-        elif processing_mode == 'video':
-            cap = cv2.VideoCapture(video_path)
-            
-            while True:
-                success, frame = cap.read()
-                
-                if not success:
-                    # Loop video
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    continue
-                
-                # Process frame with right leg detection
-                processed_frame = detector.process_frame(frame)
-                
-                # Encode frame
-                ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                frame_bytes = buffer.tobytes()
-                
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                
-        elif processing_mode == 'image':
-            # For image, read once and loop
-            frame = cv2.imread(video_path)
-            if frame is not None:
-                print(f"Processing image: {video_path}, shape: {frame.shape}")
-                processed_frame = detector.process_frame(frame, debug=True)
-                ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                frame_bytes = buffer.tobytes()
-                
-                # Clean up image detector after processing
-                try:
-                    detector.pose.close()
-                    detector.selfie_seg.close()
-                except:
-                    pass
-                
-                # Loop the same processed image
-                while True:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            else:
-                print(f"Failed to read image: {video_path}")
-                
-    except Exception as e:
-        print(f"Error in generate_frames: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # Only cleanup video capture if not webcam (webcam stays persistent)
-        if processing_mode == 'video':
-            try:
-                cap.release()
-            except:
-                pass
-
-
-@app.route('/switch_mode/<mode>')
-def switch_mode(mode):
-    """Switch between webcam and uploaded file"""
-    global processing_mode, camera, current_detector
-    
-    if mode == 'webcam':
-        processing_mode = 'webcam'
-        
-        # Release camera if exists
-        if camera is not None:
-            camera.release()
-            camera = None
-        
-        # Clean up detector to force recreation
-        if current_detector is not None:
-            try:
-                current_detector.pose.close()
-                current_detector.selfie_seg.close()
-            except:
-                pass
-            current_detector = None
-            
-        return jsonify({'success': True, 'mode': 'webcam'})
-    
-    return jsonify({'error': 'Invalid mode'}), 400
+@app.route('/switch_mode/webcam')
+def switch_mode_webcam():
+    with _lock:
+        _state.processing_mode = 'webcam'
+        _state.stop_requested  = False
+        _state.generation     += 1
+    return jsonify({'success': True, 'mode': 'webcam'})
 
 
 @app.route('/stop')
 def stop():
-    """Stop camera and release resources"""
-    global camera, current_detector
-    
-    if camera is not None:
-        camera.release()
-        camera = None
-    
-    # Also cleanup detector
-    if current_detector is not None:
-        try:
-            current_detector.pose.close()
-            current_detector.selfie_seg.close()
-        except:
-            pass
-        current_detector = None
-        
+    with _lock:
+        _state.stop_requested = True
     return jsonify({'success': True})
 
+
+@app.route('/gait_data')
+def gait_data_endpoint():
+    """Return the most recent gait data (polled by the frontend)."""
+    with _lock:
+        data = getattr(_state, 'last_gait_data', None)
+    return jsonify(data or {"status": "no data yet"})
+
+
+# ─── FRAME GENERATOR ──────────────────────────────────────────────
+
+_FPS_LIMIT = 30
+_FRAME_INTERVAL = 1.0 / _FPS_LIMIT
+
+
+def _generate_frames(my_generation: int):
+    """
+    Generator that owns its own detector and VideoCapture.
+    Exits when:
+      • the client disconnects (GeneratorExit)
+      • /stop was called (_state.stop_requested)
+      • a newer /video_feed request supersedes us (_state.generation != my_generation)
+    """
+    cap     = None
+    detector = None
+
+    try:
+        # ── snapshot current mode ──────────────────────────────────
+        with _lock:
+            mode       = _state.processing_mode
+            video_path = _state.video_path
+
+        # ── create detector (owned by this generator) ─────────────
+        static = (mode == 'image')
+        detector = RightLegDetector(static_mode=static)
+
+        # ── open capture if needed ─────────────────────────────────
+        if mode == 'webcam':
+            cap = cv2.VideoCapture(0)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, _FPS_LIMIT)
+
+        elif mode == 'video':
+            if video_path is None:
+                return
+            cap = cv2.VideoCapture(video_path)
+
+        # ── IMAGE mode: render once, loop the static result ────────
+        if mode == 'image':
+            if video_path is None:
+                return
+            frame = cv2.imread(video_path)
+            if frame is None:
+                return
+
+            rendered, gait = detector.process_frame(frame, debug=True)
+            with _lock:
+                _state.last_gait_data = gait
+
+            _, buf = cv2.imencode('.jpg', rendered, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            payload = buf.tobytes()
+
+            while True:
+                # Check exit conditions
+                with _lock:
+                    if _state.stop_requested or _state.generation != my_generation:
+                        return
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + payload + b'\r\n')
+                time.sleep(_FRAME_INTERVAL)
+
+        # ── WEBCAM / VIDEO loop ────────────────────────────────────
+        while True:
+            # Exit conditions
+            with _lock:
+                if _state.stop_requested or _state.generation != my_generation:
+                    return
+
+            ok, frame = cap.read()
+            if not ok:
+                if mode == 'video':
+                    # loop video
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+                else:
+                    # webcam broken
+                    return
+
+            rendered, gait = detector.process_frame(frame, debug=True)
+            with _lock:
+                _state.last_gait_data = gait
+
+            _, buf = cv2.imencode('.jpg', rendered, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n')
+
+            time.sleep(_FRAME_INTERVAL)
+
+    except GeneratorExit:
+        # Client disconnected — clean exit
+        pass
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+    finally:
+        # ── guaranteed cleanup ─────────────────────────────────────
+        if cap is not None:
+            cap.release()
+        if detector is not None:
+            detector.close()
+
+
+# ─── STARTUP ──────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

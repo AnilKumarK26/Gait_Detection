@@ -7,89 +7,127 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🦵 Real-Time Right Leg Detection</h1>
-            <p class="subtitle">Advanced Computer Vision with MediaPipe & Segmentation</p>
-        </header>
+<div class="container">
 
-        <div class="main-content">
-            <!-- Control Panel -->
-            <div class="control-panel">
-                <div class="mode-selector">
-                    <h3>Select Input Mode</h3>
-                    <div class="mode-buttons">
-                        <button id="webcamBtn" class="mode-btn active" onclick="switchToWebcam()">
-                            📹 Webcam
-                        </button>
-                        <button id="uploadBtn" class="mode-btn" onclick="showUpload()">
-                            📁 Upload File
-                        </button>
-                    </div>
-                </div>
+    <!-- ─── HEADER ──────────────────────────────────────────── -->
+    <header>
+        <h1>🦵 Real-Time Right Leg Detection</h1>
+        <p class="subtitle">MediaPipe Pose · Selfie Segmentation · Gait Metrics</p>
+    </header>
 
-                <div class="upload-section" id="uploadSection" style="display: none;">
-                    <h3>Upload Image/Video</h3>
-                    <div class="file-upload">
-                        <input type="file" id="fileInput" accept="image/*,video/*" onchange="handleFileUpload(event)">
-                        <label for="fileInput" class="upload-label">
-                            <span id="fileName">Choose file...</span>
-                        </label>
-                    </div>
-                    <div id="uploadStatus" class="upload-status"></div>
-                </div>
+    <!-- ─── MAIN GRID ───────────────────────────────────────── -->
+    <div class="main-content">
 
-                <div class="info-panel">
-                    <h3>ℹ️ Information</h3>
-                    <ul class="info-list">
-                        <li><strong>Detection:</strong> MediaPipe Pose</li>
-                        <li><strong>Segmentation:</strong> Selfie Segmentation</li>
-                        <li><strong>Supported:</strong> All orientations</li>
-                        <li><strong>Performance:</strong> Real-time (20+ FPS)</li>
-                    </ul>
-                </div>
+        <!-- ── LEFT PANEL: controls ──────────────────────────── -->
+        <aside class="control-panel">
 
-                <div class="legend">
-                    <h3>🎨 Legend</h3>
-                    <div class="legend-item">
-                        <span class="color-box" style="background: #64C8FF;"></span>
-                        <span>Right Leg (Highlighted)</span>
-                    </div>
-                    <div class="legend-item">
-                        <span class="color-box" style="background: white; border: 1px solid #ccc;"></span>
-                        <span>Rest of Body (Masked)</span>
-                    </div>
+            <!-- Mode selector -->
+            <section class="panel-section">
+                <h3>Input Mode</h3>
+                <div class="mode-buttons">
+                    <button id="webcamBtn" class="mode-btn active" onclick="switchToWebcam()">📹 Webcam</button>
+                    <button id="uploadBtn" class="mode-btn"        onclick="showUpload()">📁 Upload</button>
                 </div>
-            </div>
+            </section>
 
-            <!-- Video Display -->
-            <div class="video-container">
-                <div class="video-wrapper">
-                    <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed">
-                    <div class="video-overlay">
-                        <span id="statusIndicator" class="status-indicator active">● LIVE</span>
-                    </div>
+            <!-- Upload area (hidden until Upload clicked) -->
+            <section class="upload-section" id="uploadSection" style="display:none;">
+                <h3>Upload Image / Video</h3>
+                <div class="file-upload">
+                    <input type="file" id="fileInput" accept="image/*,video/*" onchange="handleFileUpload(event)">
+                    <label for="fileInput" class="upload-label">
+                        <span id="fileName">Choose file…</span>
+                    </label>
                 </div>
-                
-                <div class="video-controls">
-                    <button id="startBtn" class="control-btn" onclick="startDetection()">
-                        ▶️ Start
-                    </button>
-                    <button id="stopBtn" class="control-btn" onclick="stopDetection()">
-                        ⏸️ Stop
-                    </button>
-                    <button id="fullscreenBtn" class="control-btn" onclick="toggleFullscreen()">
-                        ⛶ Fullscreen
-                    </button>
+                <div id="uploadStatus" class="upload-status" style="display:none;"></div>
+            </section>
+
+            <!-- Legend -->
+            <section class="panel-section">
+                <h3>🎨 Legend</h3>
+                <div class="legend-item">
+                    <span class="color-box" style="background:#64C8FF;"></span>
+                    <span>Right Leg (highlighted)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="color-box" style="background:#3c3c3c; border:1px solid #555;"></span>
+                    <span>Rest of Body (silhouette)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="color-box" style="background:#000; border:1px solid #555;"></span>
+                    <span>Background</span>
+                </div>
+            </section>
+
+            <!-- Info -->
+            <section class="panel-section">
+                <h3>ℹ️ Info</h3>
+                <ul class="info-list">
+                    <li><strong>Pose:</strong> MediaPipe (model complexity 1)</li>
+                    <li><strong>Segmentation:</strong> Selfie Seg (single pass / frame)</li>
+                    <li><strong>Smoothing:</strong> EMA temporal filter</li>
+                    <li><strong>Max FPS:</strong> 30</li>
+                </ul>
+            </section>
+        </aside>
+
+        <!-- ── RIGHT PANEL: video + gait data ────────────────── -->
+        <main class="video-container">
+
+            <!-- Video feed -->
+            <div class="video-wrapper">
+                <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed">
+                <div class="video-overlay">
+                    <span id="statusIndicator" class="status-indicator active">● LIVE</span>
                 </div>
             </div>
-        </div>
 
-        <footer>
-            <p>Built with MediaPipe, OpenCV & Flask | Edge-Optimized Detection</p>
-        </footer>
+            <!-- Controls -->
+            <div class="video-controls">
+                <button class="control-btn" onclick="startDetection()">▶️ Start</button>
+                <button class="control-btn" onclick="stopDetection()">⏸️ Stop</button>
+                <button class="control-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+            </div>
+
+            <!-- Live gait data panel -->
+            <section class="gait-panel" id="gaitPanel">
+                <h3>📊 Gait Data</h3>
+                <div class="gait-grid">
+                    <div class="gait-card">
+                        <span class="gait-label">Confidence</span>
+                        <span class="gait-value" id="gaitConfidence">—</span>
+                    </div>
+                    <div class="gait-card">
+                        <span class="gait-label">Knee Angle</span>
+                        <span class="gait-value" id="gaitKnee">—</span>
+                    </div>
+                    <div class="gait-card">
+                        <span class="gait-label">Scale Factor</span>
+                        <span class="gait-value" id="gaitScale">—</span>
+                    </div>
+                    <div class="gait-card">
+                        <span class="gait-label">Stride Count</span>
+                        <span class="gait-value" id="gaitStride">—</span>
+                    </div>
+                    <div class="gait-card">
+                        <span class="gait-label">Timestamp</span>
+                        <span class="gait-value" id="gaitTime">—</span>
+                    </div>
+                    <div class="gait-card">
+                        <span class="gait-label">Status</span>
+                        <span class="gait-value" id="gaitStatus">waiting…</span>
+                    </div>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <!-- ─── FOOTER ──────────────────────────────────────────── -->
+    <footer>
+        <p>Built with MediaPipe · OpenCV · Flask &nbsp;|&nbsp; Temporal smoothing · Gait metrics</p>
+    </footer>
+</div>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

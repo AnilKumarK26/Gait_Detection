@@ -1,186 +1,196 @@
-* {
+/* ═══════════════════════════════════════════════════════════════
+   Real-Time Right Leg Detection — Stylesheet
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+:root {
+    --bg-deep:      #0f172a;
+    --bg-card:      rgba(255,255,255,.05);
+    --bg-card-alt:  rgba(51,65,85,.25);
+    --border:       rgba(255,255,255,.1);
+    --accent:       #64C8FF;
+    --accent-dim:   rgba(100,200,255,.2);
+    --text-primary: #e2e8f0;
+    --text-muted:   #94a3b8;
+    --text-sub:     #cbd5e1;
+    --green:        #22c55e;
+    --red:          #ef4444;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-    color: #e2e8f0;
+    background: linear-gradient(135deg, var(--bg-deep) 0%, #1e293b 100%);
+    color: var(--text-primary);
     min-height: 100vh;
     padding: 20px;
 }
 
+/* ─── Layout ─────────────────────────────────────────────────── */
 .container {
     max-width: 1600px;
     margin: 0 auto;
 }
 
+/* ─── Header ─────────────────────────────────────────────────── */
 header {
     text-align: center;
-    margin-bottom: 40px;
-    padding: 30px;
-    background: rgba(255, 255, 255, 0.05);
+    margin-bottom: 32px;
+    padding: 28px 20px;
+    background: var(--bg-card);
     border-radius: 15px;
     backdrop-filter: blur(10px);
 }
 
 header h1 {
-    font-size: 2.5em;
-    color: #64C8FF;
-    margin-bottom: 10px;
-    text-shadow: 0 0 20px rgba(100, 200, 255, 0.5);
+    font-size: 2.4em;
+    color: var(--accent);
+    margin-bottom: 6px;
+    text-shadow: 0 0 20px rgba(100,200,255,.4);
 }
 
 .subtitle {
-    color: #94a3b8;
-    font-size: 1.1em;
+    color: var(--text-muted);
+    font-size: 1.05em;
 }
 
+/* ─── Main Grid ──────────────────────────────────────────────── */
 .main-content {
     display: grid;
-    grid-template-columns: 350px 1fr;
-    gap: 30px;
-    margin-bottom: 30px;
+    grid-template-columns: 340px 1fr;
+    gap: 28px;
+    margin-bottom: 28px;
 }
 
-/* Control Panel */
+/* ─── Control Panel (aside) ──────────────────────────────────── */
 .control-panel {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-card);
     border-radius: 15px;
-    padding: 25px;
+    padding: 24px;
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
-.control-panel h3 {
-    color: #64C8FF;
-    margin-bottom: 15px;
-    font-size: 1.2em;
+.panel-section h3,
+.upload-section h3 {
+    color: var(--accent);
+    font-size: 1.1em;
+    margin-bottom: 12px;
 }
 
+/* Mode buttons */
 .mode-buttons {
     display: flex;
     gap: 10px;
-    margin-bottom: 20px;
 }
 
 .mode-btn {
     flex: 1;
-    padding: 12px 20px;
+    padding: 11px 16px;
     border: 2px solid #334155;
-    background: rgba(51, 65, 85, 0.3);
-    color: #e2e8f0;
+    background: rgba(51,65,85,.3);
+    color: var(--text-primary);
     border-radius: 8px;
     cursor: pointer;
-    font-size: 1em;
-    transition: all 0.3s ease;
+    font-size: .95em;
+    transition: all .25s ease;
 }
 
 .mode-btn:hover {
-    background: rgba(100, 200, 255, 0.2);
-    border-color: #64C8FF;
+    background: var(--accent-dim);
+    border-color: var(--accent);
 }
 
 .mode-btn.active {
-    background: #64C8FF;
-    color: #0f172a;
-    border-color: #64C8FF;
+    background: var(--accent);
+    color: var(--bg-deep);
+    border-color: var(--accent);
+    font-weight: 600;
 }
 
+/* Upload section */
 .upload-section {
-    margin: 20px 0;
-    padding: 20px;
-    background: rgba(51, 65, 85, 0.2);
+    background: var(--bg-card-alt);
     border-radius: 10px;
+    padding: 18px;
 }
 
-.file-upload {
-    margin: 15px 0;
-}
-
-#fileInput {
-    display: none;
-}
+#fileInput { display: none; }
 
 .upload-label {
     display: block;
-    padding: 15px;
-    background: rgba(100, 200, 255, 0.1);
-    border: 2px dashed #64C8FF;
+    padding: 14px;
+    background: var(--accent-dim);
+    border: 2px dashed var(--accent);
     border-radius: 8px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all .25s ease;
+    color: var(--text-sub);
 }
 
 .upload-label:hover {
-    background: rgba(100, 200, 255, 0.2);
+    background: rgba(100,200,255,.3);
     border-color: #3b82f6;
 }
 
 .upload-status {
     margin-top: 10px;
-    padding: 10px;
-    border-radius: 5px;
+    padding: 9px 12px;
+    border-radius: 6px;
     text-align: center;
-    font-size: 0.9em;
+    font-size: .88em;
 }
 
-.info-panel {
-    margin: 20px 0;
-    padding: 20px;
-    background: rgba(51, 65, 85, 0.2);
-    border-radius: 10px;
+/* Legend */
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    color: var(--text-sub);
 }
 
+.color-box {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+/* Info list */
 .info-list {
     list-style: none;
 }
 
 .info-list li {
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    color: #cbd5e1;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    color: var(--text-sub);
+    font-size: .92em;
 }
 
-.info-list li:last-child {
-    border-bottom: none;
-}
+.info-list li:last-child { border-bottom: none; }
+.info-list strong { color: var(--accent); }
 
-.info-list strong {
-    color: #64C8FF;
-}
-
-.legend {
-    margin: 20px 0;
-    padding: 20px;
-    background: rgba(51, 65, 85, 0.2);
-    border-radius: 10px;
-}
-
-.legend-item {
-    display: flex;
-    align-items: center;
-    margin: 10px 0;
-    gap: 10px;
-}
-
-.color-box {
-    width: 30px;
-    height: 30px;
-    border-radius: 5px;
-    display: inline-block;
-}
-
-/* Video Container */
+/* ─── Video Container (main) ─────────────────────────────────── */
 .video-container {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-card);
     border-radius: 15px;
-    padding: 25px;
+    padding: 24px;
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
 }
 
 .video-wrapper {
@@ -188,7 +198,6 @@ header h1 {
     background: #000;
     border-radius: 10px;
     overflow: hidden;
-    margin-bottom: 20px;
 }
 
 #videoFeed {
@@ -200,100 +209,112 @@ header h1 {
 
 .video-overlay {
     position: absolute;
-    top: 15px;
-    right: 15px;
+    top: 12px;
+    right: 14px;
 }
 
 .status-indicator {
-    padding: 8px 15px;
-    background: rgba(0, 0, 0, 0.7);
+    padding: 6px 14px;
+    background: rgba(0,0,0,.7);
     border-radius: 20px;
-    font-size: 0.9em;
-    font-weight: bold;
+    font-size: .85em;
+    font-weight: 600;
 }
 
-.status-indicator.active {
-    color: #22c55e;
-}
+.status-indicator.active   { color: var(--green); }
+.status-indicator.inactive { color: var(--red);   }
 
-.status-indicator.inactive {
-    color: #ef4444;
-}
-
+/* Video controls */
 .video-controls {
     display: flex;
-    gap: 15px;
+    gap: 12px;
     justify-content: center;
+    flex-wrap: wrap;
 }
 
 .control-btn {
-    padding: 12px 30px;
-    background: rgba(100, 200, 255, 0.2);
-    border: 2px solid #64C8FF;
-    color: #e2e8f0;
+    padding: 10px 26px;
+    background: var(--accent-dim);
+    border: 2px solid var(--accent);
+    color: var(--text-primary);
     border-radius: 8px;
     cursor: pointer;
-    font-size: 1em;
-    transition: all 0.3s ease;
+    font-size: .95em;
+    transition: all .25s ease;
 }
 
 .control-btn:hover {
-    background: #64C8FF;
-    color: #0f172a;
+    background: var(--accent);
+    color: var(--bg-deep);
     transform: translateY(-2px);
-    box-shadow: 0 5px 20px rgba(100, 200, 255, 0.4);
+    box-shadow: 0 4px 16px rgba(100,200,255,.35);
 }
 
-.control-btn:active {
-    transform: translateY(0);
+.control-btn:active { transform: translateY(0); }
+
+/* ─── Gait Data Panel ────────────────────────────────────────── */
+.gait-panel {
+    background: var(--bg-card-alt);
+    border-radius: 12px;
+    padding: 18px 20px;
 }
 
+.gait-panel h3 {
+    color: var(--accent);
+    font-size: 1.05em;
+    margin-bottom: 12px;
+}
+
+.gait-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.gait-card {
+    background: rgba(0,0,0,.25);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.gait-label {
+    font-size: .75em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+
+.gait-value {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────── */
 footer {
     text-align: center;
-    padding: 20px;
+    padding: 18px;
     color: #64748b;
-    font-size: 0.9em;
+    font-size: .88em;
 }
 
-/* Responsive Design */
-@media (max-width: 1200px) {
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 1100px) {
     .main-content {
         grid-template-columns: 1fr;
     }
-    
-    .control-panel {
-        order: 2;
-    }
-    
-    .video-container {
-        order: 1;
-    }
+    .control-panel { order: 2; }
+    .video-container { order: 1; }
 }
 
-@media (max-width: 768px) {
-    header h1 {
-        font-size: 1.8em;
-    }
-    
-    .mode-buttons {
-        flex-direction: column;
-    }
-    
-    .video-controls {
-        flex-direction: column;
-    }
-}
-
-/* Loading animation */
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-}
-
-.loading {
-    animation: pulse 2s ease-in-out infinite;
+@media (max-width: 680px) {
+    header h1        { font-size: 1.7em; }
+    .mode-buttons    { flex-direction: column; }
+    .video-controls  { flex-direction: column; align-items: center; }
+    .gait-grid       { grid-template-columns: repeat(2, 1fr); }
 }
